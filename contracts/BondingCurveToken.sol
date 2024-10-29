@@ -5,7 +5,7 @@ import "./INonfungiblePositionManager.sol";
 import "./IWETH9.sol";
 
 contract BondingCurveToken is ERC20 {
-    uint256 public constant MAX_SUPPLY = 1000000 * (10 ** 18);
+    uint256 public constant MAX_SUPPLY = 21000 * (10 ** 18);
     uint256 public marketCap;
     address public owner;
 
@@ -24,19 +24,31 @@ contract BondingCurveToken is ERC20 {
         owner = msg.sender;
         nonfungiblePositionManager = INonfungiblePositionManager(positionManagerAddress);
         weth9 = IWETH9(wethAddress);
+
+        // Mint the total supply to the contract itself
+        _mint(address(this), MAX_SUPPLY);
     }
 
     function buyTokens() public payable {
-        uint256 tokensToMint = msg.value * getCurrentPrice();
-        require(totalSupply() + tokensToMint <= MAX_SUPPLY, "Exceeds max supply");
-        _mint(msg.sender, tokensToMint);
+        uint256 tokenPrice = getCurrentPrice();
+        uint256 tokensToTransfer = (msg.value * (10 ** decimals())) / tokenPrice;
+
+        require(balanceOf(address(this)) >= tokensToTransfer, "Not enough tokens available");
+
+        // Transfer tokens from the contract to the buyer
+        _transfer(address(this), msg.sender, tokensToTransfer);
+
         marketCap += msg.value;
         checkMarketCap();
     }
 
     function getCurrentPrice() public view returns (uint256) {
-        // Simple linear price increase
-        return (totalSupply() + 1) / (10 ** decimals());
+        // Define base price and price increment in wei
+        uint256 basePrice = 1e15; // 0.001 ETH per token
+        uint256 priceIncrement = 1e13; // 0.00001 ETH per token per supply unit
+        uint256 tokensSold = MAX_SUPPLY - balanceOf(address(this));
+        uint256 price = basePrice + (priceIncrement * tokensSold) / (10 ** decimals());
+        return price;
     }
 
     function checkMarketCap() internal {
@@ -47,7 +59,7 @@ contract BondingCurveToken is ERC20 {
 
     function deployToUniswap() internal {
         // Approve the NonfungiblePositionManager to spend this token
-        _approve(address(this), address(nonfungiblePositionManager), totalSupply());
+        _approve(address(this), address(nonfungiblePositionManager), balanceOf(address(this)));
 
         // Wrap ETH balance to WETH
         uint256 ethBalance = address(this).balance;
@@ -58,8 +70,8 @@ contract BondingCurveToken is ERC20 {
 
         // Determine token0 and token1
         (address token0, address token1, uint256 amount0Desired, uint256 amount1Desired) = address(this) < address(weth9)
-            ? (address(this), address(weth9), totalSupply(), ethBalance)
-            : (address(weth9), address(this), ethBalance, totalSupply());
+            ? (address(this), address(weth9), balanceOf(address(this)), ethBalance)
+            : (address(weth9), address(this), ethBalance, balanceOf(address(this)));
 
         // Define the fee tier (e.g., 0.3%)
         uint24 fee = 3000;
